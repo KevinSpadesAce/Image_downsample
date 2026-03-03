@@ -4,17 +4,16 @@ from PIL import Image
 import argparse
 from tqdm import tqdm
 
+IMG_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+
 # ---------------------------
 # Resize core function
 # ---------------------------
 
-def resize_image(img_path, output_path, down_size=128, interpolation="bilinear"):
-    img = Image.open(img_path).convert("RGB")
+def resize_image(img: Image.Image, down_size=128, interpolation="bilinear") -> Image.Image:
+    
+    orig_w, orig_h = img.size
 
-    if img.size != (512, 512):
-        raise ValueError(f"{img_path} is not 512x512, got {img.size}")
-
-    # Select interpolation
     interp_map = {
         "bilinear": Image.BILINEAR,
         "bicubic": Image.BICUBIC,
@@ -26,37 +25,39 @@ def resize_image(img_path, output_path, down_size=128, interpolation="bilinear")
 
     interp = interp_map[interpolation]
 
-    # Downsample
+    # 下采样
     img_down = img.resize((down_size, down_size), interp)
 
-    # Upsample back to 512x512
-    img_up = img_down.resize((512, 512), interp)
+    # 再拉回原始尺寸
+    img_up = img_down.resize((orig_w, orig_h), interp)
 
-    img_up.save(output_path)
-
+    return img_up
 
 # ---------------------------
 # Batch process directory
 # ---------------------------
 
-def process_directory(input_dir, output_dir, down_size, interpolation):
-    input_dir = Path(input_dir)
-    output_dir = Path(output_dir)
+def process_tree(input_dir: Path, output_dir: Path, down_size: int, interpolation: str, keep_format: bool):
+    input_dir = input_dir.resolve()
+    output_dir = output_dir.resolve()
 
-    for img_path in tqdm(list(input_dir.rglob("*.*"))):
-        if img_path.suffix.lower() not in [".png", ".jpg", ".jpeg"]:
-            continue
+    all_files = [p for p in input_dir.rglob("*") if p.is_file() and p.suffix.lower() in IMG_EXTS]
 
-        relative_path = img_path.relative_to(input_dir)
-        save_path = output_dir / relative_path
-        save_path.parent.mkdir(parents=True, exist_ok=True)
+    for src in tqdm(all_files, desc="Processing"):
+        rel = src.relative_to(input_dir)                    # e.g. CelebA/Real/0/12.jpg
+        dst = output_dir / rel                              # e.g. downSampled_Image_Selection/CelebA/Real/0/12.jpg
+        dst.parent.mkdir(parents=True, exist_ok=True)
 
-        resize_image(
-            img_path,
-            save_path,
-            down_size=down_size,
-            interpolation=interpolation
-        )
+        img = Image.open(src).convert("RGB")
+        out = resize_image(img, down_size=down_size, interpolation=interpolation)
+
+        # 保留原后缀写回（jpg/png等）
+        if keep_format:
+            out.save(dst)
+        else:
+            # 不保留就统一输出成PNG（路径后缀会变成 .png）
+            dst = dst.with_suffix(".png")
+            out.save(dst)
 
 
 # ---------------------------
@@ -67,14 +68,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_dir", type=str, required=True)
     parser.add_argument("--output_dir", type=str, required=True)
-    parser.add_argument("--down_size", type=int, default=128)
+    parser.add_argument("--down_size", type=int, default=128,
+                        help="Downsample size (e.g., 128, 128)")
     parser.add_argument("--interpolation", type=str, default="bilinear")
 
     args = parser.parse_args()
 
-    process_directory(
-        args.input_dir,
-        args.output_dir,
-        args.down_size,
-        args.interpolation
+    process_tree(
+        Path(args.input_dir),
+        Path(args.output_dir),
+        down_size=args.down_size,
+        interpolation=args.interpolation,
+        keep_format=True
     )
